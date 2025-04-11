@@ -1,0 +1,7 @@
+requests
+bs4
+rich
+PyPDF2
+python-docx
+exifread
+Pillow
