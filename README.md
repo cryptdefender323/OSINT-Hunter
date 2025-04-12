@@ -21,5 +21,4 @@
 ```bash
 git clone https://github.com/cryptdefender323/OSINT-Hunter.git
 cd OSINT-Hunter
-chmod +x install.sh
-./install.sh
+bash install.sh
