@@ -12,7 +12,6 @@
 - 🔎 JavaScript/Endpoint/Param Scanner
 - 🧬 XSS Parameter Fuzzer
 - 🧼 Pastebin & Telegram Scraper
-- 🕶️ Stealth Mode with auto-rotating proxies or TOR
 
 ---
 
