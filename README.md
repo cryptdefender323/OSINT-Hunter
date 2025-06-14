@@ -21,3 +21,4 @@
 git clone https://github.com/cryptdefender323/OSINT-Hunter.git
 cd OSINT-Hunter
 bash install.sh
+python3 -m pip install --break-system-packages -r requirements.txt
