@@ -132,19 +132,19 @@ def save_json(data, keyword, folder):
 
 def run(proxy=None):
     console.rule("[bold cyan]:: PASTEBIN LEAK SCANNER ::[/bold cyan]", align="center")
-    
-    choice = input("Pilih cara pencarian:\n[1] Gunakan kata kunci sensitif bawaan\n[2] Masukkan custom keyword/nama/email/nomor telepon\nPilihan: ").strip()
+
+    choice = input("Choose search method:\n[1] Use built-in sensitive keywords\n[2] Enter custom keyword/name/email/phone\nChoice: ").strip()
 
     if choice == "1":
         keywords = KEYWORDS
     elif choice == "2":
-        custom = input("Masukkan keyword: ").strip()
+        custom = input("Enter your keyword: ").strip()
         if not custom:
-            console.print("[red]❌ Kata kunci tidak boleh kosong![/red]")
+            console.print("[red]❌ Keyword cannot be empty![/red]")
             return
         keywords = [custom]
     else:
-        console.print("[red]❌ Pilihan tidak valid![/red]")
+        console.print("[red]❌ Invalid choice![/red]")
         return
 
     all_results = []
@@ -160,7 +160,7 @@ def run(proxy=None):
         table.add_column("Found?", justify="center")
 
         for item in found_data:
-            has_content = "[green]Ya[/green]" if item.get("content") and len(item["content"]) > 10 else "[red]Tidak[/red]"
+            has_content = "[green]Yes[/green]" if item.get("content") and len(item["content"]) > 10 else "[red]No[/red]"
             table.add_row(
                 item["source"],
                 item["url"],
