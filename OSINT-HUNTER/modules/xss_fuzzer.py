@@ -1,90 +1,162 @@
+#!/usr/bin/env python3
+
 import requests
-import re
-import json
-from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
-from rich.console import Console
-from datetime import datetime
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse, urljoin
+from bs4 import BeautifulSoup
+from playwright.sync_api import sync_playwright
+import argparse
+import concurrent.futures
+import signal
+import sys
 import os
+import webbrowser
 
-console = Console()
-HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-def fetch_payloads(proxy=None):
-    console.print("[cyan]→ Mengambil payload XSS dari GitHub...[/cyan]")
-    url = "https://raw.githubusercontent.com/payloadbox/xss-payload-list/master/README.md"
-    payloads = []
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
-        matches = re.findall(r'`(.*?)`', res.text)
-        for p in matches:
-            if "<script>" in p or "alert" in p or "onerror" in p:
-                payloads.append(p)
-        payloads = list(set(payloads))
-        console.print(f"[green]✔ Found {len(payloads)} payload XSS.[/green]")
-    except Exception as e:
-        console.print(f"[red]Failed to fetch payloads: {e}[/red]")
-    return payloads[:30]
+class XSSScanner:
+    def __init__(self, base_url, payloads):
+        self.base_url = base_url
+        self.payloads = payloads
+        self.visited = set()
+        self.results = []
+        os.makedirs("logs", exist_ok=True)
+        self.log_file = open("logs/xss_results.txt", "w")
 
-def inject_payload(url, param, payload):
-    parsed = urlparse(url)
-    query = parse_qs(parsed.query)
-    query[param] = payload
-    new_query = urlencode(query, doseq=True)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
+    def crawl(self, url):
+        if url in self.visited:
+            return
+        self.visited.add(url)
+        try:
+            res = requests.get(url, timeout=5)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            for tag in soup.find_all(['a', 'form'], href=True):
+                next_url = urljoin(url, tag.get('href'))
+                if self.base_url in next_url:
+                    self.crawl(next_url)
+        except:
+            pass
 
-def fuzz_xss(url, param_list, payloads, proxy=None):
-    console.print(f"[cyan]→ Fuzzing XSS on {url}[/cyan]")
-    result = {
-        "target": url,
-        "tested_params": [],
-        "xss_found": []
-    }
-    for param in param_list:
-        for payload in payloads:
-            test_url = inject_payload(url, param, payload)
+    def extract_params(self, url):
+        return list(parse_qs(urlparse(url).query).keys())
+
+    def inject_payload(self, url, param, payload):
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        qs[param] = payload
+        new_query = urlencode(qs, doseq=True)
+        return urlunparse(parsed._replace(query=new_query))
+
+    def encode_payload(self, payload):
+        waf_bypass = [
+            payload,
+            payload.replace('<', '%3C').replace('>', '%3E').replace('"', '%22'),
+            payload.replace('<', '&lt;').replace('>', '&gt;'),
+            payload.replace('script', 'scr\u0069pt'),
+            payload.replace('alert', '\u0061lert'),
+            payload.replace('(', '%28').replace(')', '%29'),
+            ''.join(['&#{};'.format(ord(c)) for c in payload]),
+        ]
+        return list(set(waf_bypass))
+
+    def detect_xss(self, url):
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            xss_triggered = False
+
+            def on_dialog(dialog):
+                nonlocal xss_triggered
+                xss_triggered = True
+                dialog.dismiss()
+
+            page.on("dialog", on_dialog)
             try:
-                res = requests.get(test_url, headers=HEADERS, timeout=5, proxies=proxy)
-                if payload in res.text:
-                    console.print(f"[bold green][+]Reflected XSS found in param: {param}[/bold green]")
-                    result["xss_found"].append({
-                        "url": test_url,
-                        "param": param,
-                        "payload": payload
-                    })
-                    break
+                page.goto(url, timeout=8000)
             except:
-                continue
-        result["tested_params"].append(param)
-    return result
+                pass
 
-def save_json(data, domain):
-    os.makedirs("logs", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d%H%M")
-    filename = f"logs/xss_fuzz_{domain}_{timestamp}.json"
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4)
-    console.print(f"[green]✔ XSS Result saved to {filename}[/green]")
+            try:
+                page.evaluate("document.body.innerHTML += '<div id=\"domxss\">XSS</div>';")
+                if page.query_selector('#domxss'):
+                    xss_triggered = True
+            except:
+                pass
 
-def run(proxy=None):
-    try:
-        console.print("\n[bold cyan]:: XSS PARAM FUZZER MODULE[/bold cyan]")
-        target = input("Enter the target URL (with ?param=): ").strip()
-        parsed = urlparse(target)
-        domain = parsed.netloc
+            browser.close()
+            return xss_triggered
 
-        if not parsed.query:
-            console.print("[red]URL must contain parameters! Example: ?q=abc[/red]")
-            return
+    def test_url(self, url):
+        params = self.extract_params(url)
+        for param in params:
+            for p in self.payloads:
+                for encoded in self.encode_payload(p):
+                    test_url = self.inject_payload(url, param, encoded)
+                    if self.detect_xss(test_url):
+                        self.results.append((test_url, encoded))
+                        print(f"[✔] XSS Detected: \033[94m{test_url}\033[0m | Payload: {encoded}")
+                        self.log_file.write(f"[✔] {test_url} | {encoded}\n")
+                    else:
+                        print(f"[✘] No XSS: {test_url} | Payload: {encoded}")
+                        self.log_file.write(f"[✘] {test_url} | {encoded}\n")
 
-        param_list = list(parse_qs(parsed.query).keys())
-        if not param_list:
-            console.print("[red]Failed to parse parameters[/red]")
-            return
+    def run(self):
+        print("[*] Crawling for URLs...")
+        self.crawl(self.base_url)
+        print(f"[*] Testing {len(self.visited)} URLs...")
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+                executor.map(self.test_url, self.visited)
+        except KeyboardInterrupt:
+            print("\n[!] Scan interrupted by user")
+        finally:
+            self.log_file.close()
+            print("[*] Scan finished. Results saved in logs/xss_results.txt")
 
-        payloads = fetch_payloads(proxy)
-        results = fuzz_xss(target, param_list, payloads, proxy)
-        save_json(results, domain)
-        console.print("[bold green]✓ XSS fuzzing complete[/bold green]")
+            if self.results:
+                print("\n[!] Triggered XSS URLs (clickable):")
+                for res in self.results:
+                    print(f" → \033]8;;{res[0]}\033\\{res[0]}\033]8;;\033\\")
+            else:
+                print("[-] No XSS found.")
 
-    except KeyboardInterrupt:
-        console.print("\n[red]❌ Canceled by user (Ctrl+C)[/red]")
+            try:
+                input("\n[bold blue]→ Press ENTER to return to the main menu...[/bold blue]\n")
+            except KeyboardInterrupt:
+                pass
+
+
+def run():
+    print("[*] Running XSS Fuzzer module (Press CTRL+C to cancel)...")
+    url = input("Target URL (e.g. https://target.com/search?q=): ").strip()
+    payload_path = input("Path to payload file (e.g. XSS_Payload.txt): ").strip()
+
+    if not url or not payload_path:
+        print("[!] URL and payload path required.")
+        return
+
+    if payload_path.startswith("http"):
+        payloads = requests.get(payload_path).text.splitlines()
+    else:
+        with open(payload_path, 'r') as f:
+            payloads = [line.strip() for line in f if line.strip()]
+
+    scanner = XSSScanner(url, payloads)
+    scanner.run()
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Advanced XSS Scanner")
+    parser.add_argument('url', help='Target URL (with http/https)', nargs='?')
+    parser.add_argument('-p', '--payloads', help='Payload list file or URL')
+    args = parser.parse_args()
+
+    if args.url and args.payloads:
+        if args.payloads.startswith('http'):
+            payloads = requests.get(args.payloads).text.splitlines()
+        else:
+            with open(args.payloads, 'r') as f:
+                payloads = [line.strip() for line in f if line.strip()]
+
+        scanner = XSSScanner(args.url, payloads)
+        scanner.run()
+    else:
+        run()
