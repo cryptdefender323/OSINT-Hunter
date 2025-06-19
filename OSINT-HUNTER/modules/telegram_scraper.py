@@ -1,195 +1,109 @@
 #!/usr/bin/env python3
 
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import quote_plus
-import json
-from datetime import datetime
+import os
+import csv
+import asyncio
+from dotenv import load_dotenv
+from telethon.sync import TelegramClient
+from telethon.errors import SessionPasswordNeededError
 from rich.console import Console
 from rich.table import Table
-import os
-import re
 
 console = Console()
+load_dotenv()
 
-TELEGRAM_URL = "https://t.me/{}" 
+API_ID = int(os.getenv("TELEGRAM_API_ID"))
+API_HASH = os.getenv("TELEGRAM_API_HASH")
+PHONE_NUMBER = os.getenv("TELEGRAM_PHONE")
+SESSION_NAME = "telegram_osint"
 
-def generate_output_folder(query):
-    folder = f"results/telegram_{query}_{datetime.now().strftime('%Y%m%d%H%M')}"
-    os.makedirs(folder, exist_ok=True)
-    return folder
+client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
 
-def extract_profile_info(username, folder):
-    url = f"https://t.me/{username}"    
-    try:
-        res = requests.get(url, timeout=10)
-        if res.status_code != 200:
-            return None
 
-        soup = BeautifulSoup(res.text, 'html.parser')
-        profile = soup.find("div", class_="tgme_page_title")
-        bio = soup.find("div", class_="tgme_page_description")
+def save_csv(profiles, filename="telegram_profiles.csv"):
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["source", "username", "name", "phone", "status"])
+        writer.writeheader()
+        for prof in profiles:
+            writer.writerow(prof)
 
-        name = profile.get_text(strip=True) if profile else username
-        description = bio.get_text(strip=True) if bio else "No bio available"
-        photo_path = extract_profile_image(res.text, folder)
 
-        return {
-            "url": url,
-            "username": username,
-            "name": name,
-            "bio": description,
-            "photo": os.path.basename(photo_path) if photo_path else None
-        }
+async def main():
+    console.print("[cyan]✔ Mencoba login ke Telegram...[/cyan]")
+    await client.start(PHONE_NUMBER)
 
-    except Exception as e:
-        console.print(f"[red]Error fetching {username}: {e}[/red]")
-        return None
+    if not await client.is_user_authorized():
+        await client.send_code_request(PHONE_NUMBER)
+        try:
+            code = input("[?] Masukkan kode yang dikirim via Telegram: ").strip()
+            await client.sign_in(PHONE_NUMBER, code)
+        except SessionPasswordNeededError:
+            password = input("[?] Masukkan 2FA password: ").strip()
+            await client.sign_in(password=password)
 
-def extract_profile_image(html, folder):
-    match = re.search(r'<meta property="og:image" content="(.*?)">', html)
-    if not match:
-        return None
+    profiles = []
+    seen = set()
 
-    img_url = match.group(1)
-    try:
-        img_data = requests.get(img_url).content
-        filename = os.path.join(folder, "profile.jpg")
-        with open(filename, "wb") as f:
-            f.write(img_data)
-        return filename
-    except Exception as e:
-        console.print(f"[red]Error saving image: {e}[/red]")
-        return None
+    console.print("[yellow]↪ Mengambil semua kontak...[/yellow]")
+    contacts = await client.get_contacts()
+    for user in contacts:
+        uid = user.username or user.phone or "?"
+        if uid in seen:
+            continue
+        seen.add(uid)
+        profiles.append({
+            "source": "Contact",
+            "username": user.username or "(no username)",
+            "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+            "phone": user.phone or "(hidden)",
+            "status": str(user.status) if hasattr(user, 'status') else "N/A"
+        })
 
-def dork_google(keyword):
-    query = f'site:t.me "{keyword}"'
-    url = f"https://www.google.com/search?q={quote_plus(query)}"
-    return extract_telegram_links(url, engine="google")
-
-def dork_duckduckgo(keyword):
-    query = f'site:t.me "{keyword}"'
-    url = f"https://duckduckgo.com/html/?q={quote_plus(query)}"
-    return extract_telegram_links(url, engine="duckduckgo")
-
-def extract_telegram_links(url, engine="google"):
-    links = []
-    try:
-        res = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
-        soup = BeautifulSoup(res.text, "html.parser")
-
-        for a in soup.find_all("a"):
-            href = a.get("href")
-            if not href:
+    console.print("[yellow]↪ Mengambil semua grup/channel dari dialog...[/yellow]")
+    async for dialog in client.iter_dialogs():
+        entity = dialog.entity
+        if hasattr(entity, 'participants_count') and entity.participants_count:
+            try:
+                participants = await client.get_participants(entity)
+                for user in participants:
+                    uid = user.username or user.phone or "?"
+                    if uid in seen:
+                        continue
+                    seen.add(uid)
+                    profiles.append({
+                        "source": f"{dialog.name}",
+                        "username": user.username or "(no username)",
+                        "name": f"{user.first_name or ''} {user.last_name or ''}".strip(),
+                        "phone": user.phone or "(hidden)",
+                        "status": str(user.status) if hasattr(user, 'status') else "N/A"
+                    })
+            except:
                 continue
 
-            if engine == "google" and "/url?q=" in href:
-                clean = href.split("/url?q=")[1].split("&")[0]
-                if "t.me/" in clean:
-                    links.append(clean)
+    if profiles:
+        table = Table(show_header=True, header_style="bold green")
+        table.add_column("Source", style="white")
+        table.add_column("Username", style="cyan")
+        table.add_column("Name", style="magenta")
+        table.add_column("Phone", style="yellow")
+        table.add_column("Status", style="blue")
 
-            elif engine == "duckduckgo" and "t.me/" in href:
-                links.append(href)
-
-    except Exception as e:
-        console.print(f"[red]Error during search: {e}[/red]")
-    return list(set(links))
-
-def scan_profiles_by_keyword(keyword):
-    console.print(f"\n[bold cyan]:: MENCARI AKUN TELEGRAM UNTUK KATA KUNCI '{keyword}' ::[/bold cyan]")
-    
-    folder = generate_output_folder(keyword)
-    results = []
-
-    google_results = dork_google(keyword)
-    console.print(f"[green]✔ Found {len(google_results)} from Google[/green]")
-
-    duckduckgo_results = dork_duckduckgo(keyword)
-    console.print(f"[green]✔ Found {len(duckduckgo_results)} from DuckDuckGo[/green]")
-
-    all_urls = list(set(google_results + duckduckgo_results))
-    console.print(f"[cyan]→ Total unique profiles found: {len(all_urls)}[/cyan]")
-
-    table = Table(show_header=True, header_style="bold green")
-    table.add_column("Username", style="cyan")
-    table.add_column("Name", style="magenta")
-    table.add_column("Bio", style="yellow")
-    table.add_column("URL", style="blue")
-
-    for url in all_urls:
-        match = re.search(r"https?://t\.me/(\w+)", url)
-        if not match:
-            continue
-
-        username = match.group(1)
-        info = extract_profile_info(username, folder)
-
-        if info:
-            results.append(info)
+        for prof in profiles:
             table.add_row(
-                info["username"],
-                info["name"][:30],
-                info["bio"][:50],
-                info["url"]
+                prof["source"], prof["username"], prof["name"], prof["phone"], prof["status"]
             )
 
-    console.print(table)
-    save_json(results, keyword, folder)
+        console.print(table)
+        save_csv(profiles)
+        console.print("[green]✔ Data disimpan ke telegram_profiles.csv[/green]")
+    else:
+        console.print("[red]❌ Tidak ada data ditemukan.[/red]")
 
-def search_by_phone(phone_number):
-    console.print(f"\n[bold cyan]:: PENCARIAN BERDASARKAN NOMOR TELEPON '{phone_number}' ::[/bold cyan]")
-    folder = generate_output_folder(phone_number.replace("+", "").replace(" ", "_"))
-    results = []
-
-    google_results = dork_google(phone_number)
-    duckduckgo_results = dork_duckduckgo(phone_number)
-    all_urls = list(set(google_results + duckduckgo_results))
-
-    table = Table(show_header=True, header_style="bold green")
-    table.add_column("Username", style="cyan")
-    table.add_column("Name", style="magenta")
-    table.add_column("Bio", style="yellow")
-    table.add_column("URL", style="blue")
-
-    for url in all_urls:
-        match = re.search(r"https?://t\.me/(\w+)", url)
-        if not match:
-            continue
-
-        username = match.group(1)
-        info = extract_profile_info(username, folder)
-
-        if info:
-            results.append(info)
-            table.add_row(
-                info["username"],
-                info["name"][:30],
-                info["bio"][:50],
-                info["url"]
-            )
-
-    console.print(table)
-    save_json(results, phone_number.replace("+", "").replace(" ", "_"), folder)
 
 def run():
-    console.rule("[bold cyan]:: TELEGRAM OSINT SCRAPER ::[/bold cyan]", align="center")
-    choice = input("Pilih cara pencarian:\n[1] Berdasarkan nama/kata kunci\n[2] Berdasarkan nomor telepon\nMasukkan pilihan: ").strip()
+    with client:
+        client.loop.run_until_complete(main())
 
-    if choice == "1":
-        keyword = input("Masukkan nama/kata kunci (misal: putri): ").strip()
-        if not keyword:
-            console.print("[red]❌ Kata kunci tidak boleh kosong![/red]")
-            return
-        scan_profiles_by_keyword(keyword)
-
-    elif choice == "2":
-        phone = input("Masukkan nomor telepon (contoh: +628123456789): ").strip()
-        if not phone:
-            console.print("[red]❌ Nomor telepon tidak boleh kosong![/red]")
-            return
-        search_by_phone(phone)
-    else:
-        console.print("[red]❌ Pilihan tidak valid![/red]")
 
 if __name__ == "__main__":
     run()
