@@ -29,22 +29,22 @@ def save_csv(profiles, filename="telegram_profiles.csv"):
 
 
 async def main():
-    console.print("[cyan]✔ Mencoba login ke Telegram...[/cyan]")
+    console.print("[cyan]✔ Attempting to login to Telegram...[/cyan]")
     await client.start(PHONE_NUMBER)
 
     if not await client.is_user_authorized():
         await client.send_code_request(PHONE_NUMBER)
         try:
-            code = input("[?] Masukkan kode yang dikirim via Telegram: ").strip()
+            code = input("[?] Enter the code sent via Telegram: ").strip()
             await client.sign_in(PHONE_NUMBER, code)
         except SessionPasswordNeededError:
-            password = input("[?] Masukkan 2FA password: ").strip()
+            password = input("[?] Enter your 2FA password: ").strip()
             await client.sign_in(password=password)
 
     profiles = []
     seen = set()
 
-    console.print("[yellow]↪ Mengambil semua kontak...[/yellow]")
+    console.print("[yellow]↪ Fetching all contacts...[/yellow]")
     contacts = await client.get_contacts()
     for user in contacts:
         uid = user.username or user.phone or "?"
@@ -59,7 +59,7 @@ async def main():
             "status": str(user.status) if hasattr(user, 'status') else "N/A"
         })
 
-    console.print("[yellow]↪ Mengambil semua grup/channel dari dialog...[/yellow]")
+    console.print("[yellow]↪ Scanning all groups/channels from your dialog list...[/yellow]")
     async for dialog in client.iter_dialogs():
         entity = dialog.entity
         if hasattr(entity, 'participants_count') and entity.participants_count:
@@ -95,9 +95,9 @@ async def main():
 
         console.print(table)
         save_csv(profiles)
-        console.print("[green]✔ Data disimpan ke telegram_profiles.csv[/green]")
+        console.print("[green]✔ Data saved to telegram_profiles.csv[/green]")
     else:
-        console.print("[red]❌ Tidak ada data ditemukan.[/red]")
+        console.print("[red]❌ No data found.[/red]")
 
 
 def run():
