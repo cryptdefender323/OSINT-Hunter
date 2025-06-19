@@ -149,7 +149,7 @@ def extract_full_text_from_pdf(filepath):
     return full_text
 
 def extract_sensitive_info(text_list):
-    KEYWORDS = ["password", "apikey", "secret", "token", "bearer", "login", "email", "nomor hp", "telepon", "rekening", "KTP", "SIM"]
+    KEYWORDS = ["password", "apikey", "secret", "token", "bearer", "login", "email", "phone number", "contact", "bank", "ID", "driver license"]
     found = []
 
     for idx, text in enumerate(text_list):
@@ -204,14 +204,17 @@ def save_json(data, filepath):
 
 def run():
     console.rule("[bold cyan]:: METADATA EXTRACTOR PRO ::[/bold cyan]", align="center")
-    console.print("[yellow]Masukkan path file atau drag-and-drop file PDF/DOCX/JPG/PNG...[/yellow]")
+    console.print("[yellow]Enter file path or drag-and-drop a PDF/DOCX/JPG/PNG file...[/yellow]")
     filepath = input("Enter file path: ").strip()
 
     if not os.path.exists(filepath):
-        console.print("[red]❌ File tidak ditemukan![/red]")
+        console.print("[red]❌ File not found![/red]")
         return
 
     console.print(f"[blue]→ Analyzing file: {filepath}[/blue]")
     result = extract_metadata(filepath)
     console.print(json.dumps(result, indent=2, ensure_ascii=False))
     save_json(result, filepath)
+
+if __name__ == "__main__":
+    run()
