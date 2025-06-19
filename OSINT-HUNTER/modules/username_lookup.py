@@ -1,34 +1,80 @@
+#!/usr/bin/env python3
+
 import requests
 from rich.console import Console
 from rich.table import Table
 import os
 import json
 from datetime import datetime
+from bs4 import BeautifulSoup
+import re
 
 console = Console()
 
 PLATFORMS = {
-    "GitHub": "https://github.com/{}",
-    "Twitter": "https://twitter.com/{}",
-    "Instagram": "https://www.instagram.com/{}/",
-    "Reddit": "https://www.reddit.com/user/{}",
-    "Pinterest": "https://www.pinterest.com/{}/",
-    "TikTok": "https://www.tiktok.com/@{}",
-    "Steam": "https://steamcommunity.com/id/{}",
-    "GitLab": "https://gitlab.com/{}",
-    "SoundCloud": "https://soundcloud.com/{}",
-    "Flickr": "https://www.flickr.com/people/{}",
+    "GitHub": "https://github.com/{}",   
+    "Twitter": "https://twitter.com/{}",   
+    "Instagram": "https://www.instagram.com/{}/",   
+    "Reddit": "https://www.reddit.com/user/{}",   
+    "Pinterest": "https://www.pinterest.com/{}/",   
+    "TikTok": "https://www.tiktok.com/@{}",   
+    "Steam": "https://steamcommunity.com/id/{}",   
+    "GitLab": "https://gitlab.com/{}",   
+    "SoundCloud": "https://soundcloud.com/{}",   
+    "Flickr": "https://www.flickr.com/people/{}",   
     "HackerNews": "https://news.ycombinator.com/user?id={}",
     "Keybase": "https://keybase.io/{}",
     "Pastebin": "https://pastebin.com/u/{}"
 }
 
-def run(proxy=None):
-    console.print("\n[bold cyan]:: Username Lookup ::[/bold cyan]")
-    username = input("Masukkan username: ").strip()
+def generate_output_folder(username):
+    folder = f"results/{username}"
+    os.makedirs(folder, exist_ok=True)
+    return folder
 
-    if not username:
-        console.print("[red]❌ Username cannot be empty![/red]")
+def extract_profile_image(url, username, folder):
+    try:
+        res = requests.get(url, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+
+        if 'instagram' in url:
+            meta = soup.find("meta", property="og:image")
+            if meta and meta["content"]:
+                img_url = meta["content"]
+                img_data = requests.get(img_url).content
+                with open(f"{folder}/instagram.jpg", "wb") as f:
+                    f.write(img_data)
+                return f"{folder}/instagram.jpg"
+
+        elif 'tiktok' in url:
+            match = re.search(r'"avatarLarger":"(.*?)"', res.text)
+            if match:
+                img_url = match.group(1).replace("\\u0026", "&")
+                img_data = requests.get(img_url).content
+                with open(f"{folder}/tiktok.jpg", "wb") as f:
+                    f.write(img_data)
+                return f"{folder}/tiktok.jpg"
+
+        elif 'github' in url:
+            avatar = soup.select_one('img.avatar')
+            if avatar:
+                img_url = avatar['src']
+                img_data = requests.get(img_url).content
+                with open(f"{folder}/github.png", "wb") as f:
+                    f.write(img_data)
+                return f"{folder}/github.png"
+
+        return None
+
+    except Exception as e:
+        return None
+
+def run():
+    console.print("\n[bold cyan]:: USERNAME LOOKUP TOOL ::[/bold cyan]")
+    query = input("Masukkan username atau kata kunci (contoh: putri): ").strip()
+    
+    if not query:
+        console.print("[red]❌ Kata kunci tidak boleh kosong![/red]")
         return
 
     results = []
@@ -36,45 +82,56 @@ def run(proxy=None):
     table.add_column("Platform", style="cyan")
     table.add_column("Status", style="magenta")
     table.add_column("URL", style="yellow")
+    table.add_column("Foto", justify="center")
 
+    folder = generate_output_folder(query)
+    
     for platform, url_template in PLATFORMS.items():
-        url = url_template.format(username)
+        url = url_template.format(query)
+        result = {
+            "platform": platform,
+            "url": url,
+            "status": None,
+            "photo": None
+        }
+
         try:
-            r = requests.get(url, timeout=6, proxies=proxy)
-            status = "❌ Not Found"
+            res = requests.get(url, timeout=8)
+            status = res.status_code
+            found = False
 
-            if r.status_code == 200:
-                if username.lower() in r.text.lower():
-                    status = "[green]✔️ Found[/green]"
+            if status == 200:
+                if query.lower() in res.text.lower():
+                    found = True
+                    result["status"] = "[green]✔️ Ditemukan[/green]"
+                    
+                    photo_path = extract_profile_image(url, query, folder)
+                    result["photo"] = photo_path or "Available"
+                    table.add_row(platform, result["status"], url, "📷 Ya" if photo_path else "✔️")
                 else:
-                    status = "[yellow]⚠️  Possible[/yellow]"
-            elif r.status_code in [301, 302]:
-                status = "[blue]➡️ Redirect[/blue]"
-
-            table.add_row(platform, status, url)
-
-            results.append({
-                "platform": platform,
-                "status": r.status_code,
-                "url": url
-            })
+                    result["status"] = "[yellow]⚠️ Mungkin Tersedia[/yellow]"
+                    table.add_row(platform, result["status"], url, "-")
+            elif status in [301, 302]:
+                result["status"] = "[blue]➡️ Redirect[/blue]"
+                table.add_row(platform, result["status"], url, "-")
+            else:
+                result["status"] = "[red]✘ Tidak Ditemukan[/red]"
+                table.add_row(platform, result["status"], url, "-")
 
         except Exception as e:
-            table.add_row(platform, "[red]Error[/red]", url)
-            results.append({
-                "platform": platform,
-                "status": "ERROR",
-                "url": url,
-                "error": str(e)
-            })
+            result["status"] = "[red]🚫 Error[/red]"
+            table.add_row(platform, result["status"], url, "-")
+            result["error"] = str(e)
+
+        results.append(result)
 
     console.print(table)
 
-    os.makedirs("logs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M")
-    out_file = f"logs/username_lookup_{username}_{timestamp}.json"
-
+    out_file = f"{folder}/lookup_{query}_{timestamp}.json"
     with open(out_file, "w") as f:
-        json.dump(results, f, indent=4)
+        json.dump(results, f, indent=4, ensure_ascii=False)
+    console.print(f"[green]✓ Hasil disimpan ke: {out_file}[/green]")
 
-    console.print(f"[green]✓ Results are saved to: {out_file}[/green]")
+if __name__ == "__main__":
+    run()
