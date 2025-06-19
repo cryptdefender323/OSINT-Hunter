@@ -8,17 +8,29 @@ from rich.prompt import Prompt
 console = Console()
 os.makedirs("logs", exist_ok=True)
 
-from modules import (
-    username_lookup,
-    email_breach,
-    domain_recon,
-    ip_analyzer,
-    metadata_extractor,
-    url_scanner,
-    pastebin_scraper,
-    telegram_scraper,
-    xss_fuzzer
-)
+missing = []
+try:
+    from modules import (
+        username_lookup,
+        email_breach,
+        domain_recon,
+        ip_analyzer,
+        metadata_extractor,
+        url_scanner,
+        pastebin_scraper,
+        telegram_scraper,
+        xss_fuzzer
+    )
+except ModuleNotFoundError as e:
+    missing.append(str(e).split("'")[1])
+
+if missing:
+    console.print("\n[bold red]✘ Missing modules detected:[/bold red]")
+    for m in missing:
+        console.print(f"[yellow]- {m}[/yellow]")
+    console.print("\n[bold blue]→ Please install missing dependencies with:[/bold blue]")
+    console.print("[green]pip install -r requirements.txt[/green] or manually install them.")
+    exit(1)
 
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
@@ -31,7 +43,7 @@ def show_banner():
 |  _  |  __/|  _ <  | |_) | |_| \__ \ |_    | | | | | | | | | | | | | | |
 |_| |_|_|   |_| \_\ |____/ \__,_|___/\__|   |_| |_|_| |_| |_|_|_| |_| |_|
                                                                         
-                     CryptDefender V2 • Open Source Intelligence Tool Suite
+                 CryptDefender V2 • Open Source Intelligence Tool Suite
     """
     console.print(banner, style="bold green")
 
@@ -61,7 +73,7 @@ def show_menu():
     console.print("[3] Domain Recon (Whois, DNS)")
     console.print("[4] IP Analyzer (GeoIP, ASN, Ping)")
     console.print("[5] Metadata Extractor")
-    console.print("[6] ")
+    console.print("[6] URL Scanner")
     console.print("[7] XSS Param Fuzzer")
     console.print("[8] Pastebin Keyword Scraper")
     console.print("[9] Telegram OSINT Scraper")
@@ -105,4 +117,4 @@ def main():
             continue
 
 if __name__ == "__main__":
-    main() 
+    main()
