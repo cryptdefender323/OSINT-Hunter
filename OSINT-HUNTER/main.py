@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 
+import os
+from typing import Callable
 from rich.console import Console
 from rich.prompt import Prompt
-import os, requests
+
+console = Console()
+os.makedirs("logs", exist_ok=True)
+
 from modules import (
     username_lookup,
     email_breach,
@@ -14,48 +19,43 @@ from modules import (
     telegram_scraper,
     xss_fuzzer
 )
-from utils import proxy_manager
-
-console = Console()
-
-def get_proxy():
-    return proxy_manager.get_proxy()
-
-def pause_return():
-    try:
-        input("\n[bold blue]→ Tekan ENTER untuk kembali ke menu utama...[/bold blue]")
-    except:
-        pass
-    clear_screen()
-    show_banner()
-    check_ip_status()
 
 def clear_screen():
     os.system("cls" if os.name == "nt" else "clear")
 
 def show_banner():
     banner = r"""
- ██████╗ ██████╗ ██╗   ██╗██████╗ ████████╗██╗  ██╗ ██████╗ ██████╗ ███╗   ███╗
-██╔════╝ ██╔══██╗██║   ██║██╔══██╗╚══██╔══╝██║  ██║██╔═══██╗██╔══██╗████╗ ████║
-██║  ███╗██████╔╝██║   ██║██████╔╝   ██║   ███████║██║   ██║██████╔╝██╔████╔██║
-██║   ██║██╔═══╝ ██║   ██║██╔═══╝    ██║   ██╔══██║██║   ██║██╔═══╝ ██║╚██╔╝██║
-╚██████╔╝██║     ╚██████╔╝██║        ██║   ██║  ██║╚██████╔╝██║     ██║ ╚═╝ ██║
- ╚═════╝ ╚═╝      ╚═════╝ ╚═╝        ╚═╝   ╚═╝  ╚═════╝ ╚═╝     ╚═╝     ╚═╝
-                            CryptDefender V1 • OSINT TOOLS
+ _   _ ____  ____    ____            _     _____ _           _           
+| | | |  _ \|  _ \  | __ ) _   _ ___| |_  |_   _(_)_ __ ___ (_)_ __ ___  
+| |_| | |_) | |_) | |  _ \| | | / __| __|   | | | | '_ ` _ \| | '_ ` _ \ 
+|  _  |  __/|  _ <  | |_) | |_| \__ \ |_    | | | | | | | | | | | | | | |
+|_| |_|_|   |_| \_\ |____/ \__,_|___/\__|   |_| |_|_| |_| |_|_|_| |_| |_|
+                                                                        
+                     CryptDefender V2 • Open Source Intelligence Tool Suite
     """
     console.print(banner, style="bold green")
 
-def check_ip_status():
-    console.print("[cyan]Check active public IP...[/cyan]")
+def pause_return():
     try:
-        ip = requests.get("https://api.ipify.org", proxies=get_proxy(), timeout=5).text.strip()
-        console.print(f"[green]✓ Your current IP: {ip}[/green]")
-    except:
-        console.print("[red]✘ Failed to get IP. Proxy may be down.[/red]")
+        input("\n[bold blue]→ Press ENTER to return to the main menu...[/bold blue]")
+    except KeyboardInterrupt:
+        pass
+    clear_screen()
+    show_banner()
+
+def run_module(name: str, func: Callable):
+    try:
+        console.print(f"[yellow]↪ Running {name}... (Press Ctrl+C to cancel)[/yellow]")
+        func()
+    except KeyboardInterrupt:
+        console.print(f"\n[red]❌ {name} canceled by user.[/red]")
+    except Exception as e:
+        console.print(f"[red]✘ Error in module {name}: {e}[/red]")
+    finally:
+        pause_return()
 
 def show_menu():
     console.print("\n[bold cyan]:: CryptDefender | SELECT A MODULE ::[/bold cyan]")
-    console.print("[0] Toggle Proxy (Stealth / TOR / OFF)")
     console.print("[1] Username Lookup")
     console.print("[2] Email Breach Analyzer")
     console.print("[3] Domain Recon (Whois, DNS)")
@@ -67,48 +67,16 @@ def show_menu():
     console.print("[9] Telegram OSINT Scraper")
     console.print("[99] Exit")
 
-def run_module(name, func, use_proxy=True):
-    try:
-        console.print(f"[yellow]↪ Running{name}... (Press Ctrl+C to cancel)[/yellow]")
-        if use_proxy:
-            func(proxy=get_proxy())
-        else:
-            func()
-    except KeyboardInterrupt:
-        console.print(f"\n[red]❌ {name} canceled by user.[/red]")
-    except Exception as e:
-        console.print(f"[red]✘ Error in module {name}: {e}[/red]")
-    finally:
-        pause_return()
-
-def toggle_proxy():
-    if proxy_manager.get_proxy():
-        proxy_manager.unset_proxy()
-        console.print("[red]✘ Proxy dinonaktifkan.[/red]")
-    else:
-        console.print("\n[cyan]Select stealth mode:[/cyan]")
-        console.print("[1] Proxy Mode (Auto-Rotate Proxy)")
-        console.print("[2] TOR Mode (via 127.0.0.1:9050)")
-        mode = Prompt.ask("Select mode", choices=["1", "2"], default="1")
-        if mode == "1":
-            proxy_manager.activate_stealth_mode()
-        else:
-            proxy_manager.activate_stealth_mode(use_tor=True)
-
 def main():
-    os.makedirs("logs", exist_ok=True)
     while True:
         try:
             clear_screen()
             show_banner()
-            check_ip_status()
             show_menu()
-            choice = Prompt.ask("\n[bold green]crypthecom>[/bold green]", default="00")
 
-            if choice == "0":
-                toggle_proxy()
-                pause_return()
-            elif choice == "1":
+            choice = Prompt.ask("\n[bold green]cryptdefender>[/bold green]", default="00")
+
+            if choice == "1":
                 run_module("Username Lookup", username_lookup.run)
             elif choice == "2":
                 run_module("Email Breach Analyzer", email_breach.run)
@@ -117,7 +85,7 @@ def main():
             elif choice == "4":
                 run_module("IP Analyzer", ip_analyzer.run)
             elif choice == "5":
-                run_module("Metadata Extractor", metadata_extractor.run, use_proxy=False)
+                run_module("Metadata Extractor", metadata_extractor.run)
             elif choice == "6":
                 run_module("JS File + Param Scanner", js_param_scanner.run)
             elif choice == "7":
@@ -127,14 +95,14 @@ def main():
             elif choice == "9":
                 run_module("Telegram OSINT Scraper", telegram_scraper.run)
             elif choice == "99":
-                console.print("[bold red]Exit CryptDefender. See you![/bold red]")
+                console.print("[bold red]Exiting CryptDefender. See you![/bold red]")
                 break
             else:
-                console.print("[yellow]✘ Invalid input. Select a number from 0 to 9.[/yellow]")
+                console.print("[yellow]✘ Invalid input. Select a number from 1 to 9.[/yellow]")
                 pause_return()
 
         except KeyboardInterrupt:
-            continue 
+            continue
 
 if __name__ == "__main__":
-    main()
+    main() 
