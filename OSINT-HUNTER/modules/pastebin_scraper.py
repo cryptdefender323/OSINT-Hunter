@@ -1,179 +1,217 @@
 #!/usr/bin/env python3
 
-import requests
-from bs4 import BeautifulSoup
+import os
+import json
+import hashlib
+import PyPDF2
+import docx
+import exifread
+from PIL import Image
 from rich.console import Console
 from datetime import datetime
-import json
-import os
-import re
 
 console = Console()
-HEADERS = {"User-Agent": "Mozilla/5.0"}
 
-KEYWORDS = [
-    "password", "apikey", "authorization", "bearer", "secret",
-    "access_token", "key=", "token=", "email", "credit card", 
-    "cvv", "bank", "pin", "login", "root", "admin"
-]
-
-MIRROR_SOURCES = {
-    "psbdmp.ws": "https://psbdmp.ws/api/search/", 
-    "paste.ee": "https://paste.ee/search?q=",
-    "controlc.com": "https://controlc.com/search/?q="
-}
-
-def generate_output_folder(keyword):
-    folder = f"results/pastebin_{keyword}_{datetime.now().strftime('%Y%m%d%H%M')}"
-    os.makedirs(folder, exist_ok=True)
-    return folder
-
-def extract_content_psbdmp(url, proxy=None):
+def get_file_info(filepath):
     try:
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        content = soup.find("div", class_="content").get_text(strip=False)
-        return content if content else None
+        stat = os.stat(filepath)
+        return {
+            "filename": os.path.basename(filepath),
+            "size_bytes": stat.st_size,
+            "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+            "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            "hash_md5": md5_hash(filepath),
+            "hash_sha1": sha1_hash(filepath),
+            "type": None
+        }
+    except Exception as e:
+        console.print(f"[red]Error accessing file: {e}[/red]")
+        return {"error": str(e)}
+
+def md5_hash(filepath):
+    hash_md5 = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def sha1_hash(filepath):
+    hash_sha1 = hashlib.sha1()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_sha1.update(chunk)
+    return hash_sha1.hexdigest()
+
+def extract_pdf_data(filepath):
+    data = {}
+    try:
+        with open(filepath, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            if reader.metadata:
+                raw_metadata = {k: str(v) for k, v in reader.metadata.items()}
+                data["metadata"] = raw_metadata
+
+            text_pages = []
+            for page in reader.pages:
+                text = page.extract_text()
+                if text and len(text.strip()) > 0:
+                    text_pages.append(text.strip())
+
+            data["page_count"] = len(reader.pages)
+            data["text_all_pages"] = text_pages
+    except Exception as e:
+        data["pdf_error"] = str(e)
+    return data
+
+def extract_docx_data(filepath):
+    data = {}
+    try:
+        doc = docx.Document(filepath)
+        props = doc.core_properties
+        data.update({
+            "author": props.author,
+            "created": str(props.created),
+            "last_modified_by": props.last_modified_by,
+            "modified": str(props.modified),
+            "title": props.title,
+            "subject": props.subject,
+            "category": props.category,
+            "comments": props.comments,
+            "keywords": props.keywords,
+        })
+    except Exception as e:
+        data["docx_error"] = str(e)
+    return data
+
+def extract_image_gps(exif):
+    lat_tag = 'GPS GPSLatitude'
+    lon_tag = 'GPS GPSLongitude'
+    lat_ref_tag = 'GPS GPSLatitudeRef'
+    lon_ref_tag = 'GPS GPSLongitudeRef'
+
+    if lat_tag not in exif or lon_tag not in exif:
+        return {}
+
+    def convert_to_degrees(val):
+        d, m, s = [float(x.num) / float(x.den) for x in val.values]
+        return d + (m / 60.0) + (s / 3600.0)
+
+    latitude = convert_to_degrees(exif[lat_tag])
+    longitude = convert_to_degrees(exif[lon_tag])
+
+    if str(exif.get(lat_ref_tag)) == 'S':
+        latitude = -latitude
+    if str(exif.get(lon_ref_tag)) == 'W':
+        longitude = -longitude
+
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "google_maps": f"https://maps.google.com/?q={latitude},{longitude}"
+    }
+
+def extract_image_exif(filepath):
+    exif_data = {}
+    gps_data = {}
+
+    try:
+        with open(filepath, 'rb') as f:
+            tags = exifread.process_file(f)
+
+        for tag in tags:
+            value = str(tags[tag])
+            exif_data[str(tag)] = value
+
+            if "GPS" in str(tag):
+                gps_data[str(tag)] = value
+
+        if 'GPS GPSLatitude' in gps_data and 'GPS GPSLongitude' in gps_data:
+            gps_coords = extract_image_gps(tags)
+            exif_data['GPS Coordinates'] = gps_coords
+
+    except Exception as e:
+        exif_data["exif_error"] = str(e)
+
+    return exif_data
+
+def extract_full_text_from_pdf(filepath):
+    full_text = []
+    try:
+        with open(filepath, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    full_text.append(text.strip())
     except:
-        return None
+        return []
 
-def extract_content_pasteee(url, proxy=None):
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
-        match = re.search(r'<textarea.*?>(.*?)</textarea>', res.text, re.DOTALL)
-        return match.group(1).strip() if match else None
-    except:
-        return None
+    return full_text
 
-def extract_content_controlc(url, proxy=None):
-    try:
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        textarea = soup.find("textarea", id="pastesecret")
-        return textarea.get_text(strip=False) if textarea else None
-    except:
-        return None
+def extract_sensitive_info(text_list):
+    KEYWORDS = ["password", "apikey", "secret", "token", "bearer", "login", "email", "nomor hp", "telepon", "rekening", "KTP", "SIM"]
+    found = []
 
-def scrape_psbdmp(keyword, proxy=None):
-    urls = []
-    console.print(f"[cyan]→ Scanning psbdmp.ws for '{keyword}'[/cyan]")
-    try:
-        res = requests.get(MIRROR_SOURCES["psbdmp.ws"] + keyword, headers=HEADERS, timeout=10, proxies=proxy)
-        data = res.json()
-        for paste in data.get("data", []):
-            full_url = "https://psbdmp.ws/view/"  + paste.get("id")
-            content = extract_content_psbdmp(full_url, proxy)
-            urls.append({
-                "url": full_url,
-                "source": "psbdmp.ws",
-                "keyword": keyword,
-                "content": content
+    for idx, text in enumerate(text_list):
+        matches = [kw for kw in KEYWORDS if kw.lower() in text.lower()]
+        if matches:
+            found.append({
+                "page": idx+1,
+                "matches": list(set(matches)),
+                "snippet": text[:200] + "..."
             })
-    except Exception as e:
-        console.print(f"[red]✘ psbdmp.ws error: {e}[/red]")
-    return urls
 
-def scrape_pasteee(keyword, proxy=None):
-    urls = []
-    console.print(f"[cyan]→ Scanning paste.ee for '{keyword}'[/cyan]")
-    try:
-        url = MIRROR_SOURCES["paste.ee"] + keyword
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
-        soup = BeautifulSoup(res.text, "html.parser")
+    return found
 
-        for link in soup.find_all("a", href=True):
-            if "/p/" in link['href']:
-                full_url = "https://paste.ee"  + link['href']
-                content = extract_content_pasteee(full_url, proxy)
-                urls.append({
-                    "url": full_url,
-                    "source": "paste.ee",
-                    "keyword": keyword,
-                    "content": content
-                })
-    except Exception as e:
-        console.print(f"[red]✘ paste.ee error: {e}[/red]")
-    return urls
+def extract_metadata(filepath):
+    ext = os.path.splitext(filepath)[-1].lower()
+    file_info = get_file_info(filepath)
 
-def scrape_controlc(keyword, proxy=None):
-    urls = []
-    console.print(f"[cyan]→ Scanning controlc.com for '{keyword}'[/cyan]")
-    try:
-        url = MIRROR_SOURCES["controlc.com"] + keyword
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
-        soup = BeautifulSoup(res.text, "html.parser")
+    if not file_info or "error" in file_info:
+        return file_info
 
-        for link in soup.find_all("a", href=True):
-            if "view.php?" in link['href']:
-                full_url = "https://controlc.com/"  + link['href']
-                content = extract_content_controlc(full_url, proxy)
-                urls.append({
-                    "url": full_url,
-                    "source": "controlc.com",
-                    "keyword": keyword,
-                    "content": content
-                })
-    except Exception as e:
-        console.print(f"[red]✘ controlc.com error: {e}[/red]")
-    return urls
+    if ext == ".pdf":
+        file_info["type"] = "PDF"
+        pdf_data = extract_pdf_data(filepath)
+        full_text = extract_full_text_from_pdf(filepath)
+        sensitive = extract_sensitive_info(full_text)
+        file_info.update(pdf_data)
+        file_info["sensitive_keywords"] = sensitive
 
-def search_all_sources(keyword, proxy=None):
-    results = []
-    results.extend(scrape_psbdmp(keyword, proxy))
-    results.extend(scrape_pasteee(keyword, proxy))
-    results.extend(scrape_controlc(keyword, proxy))
-    return [dict(t) for t in {tuple(d.items()) for d in results}]
+    elif ext == ".docx":
+        file_info["type"] = "DOCX"
+        file_info["data"] = extract_docx_data(filepath)
 
-def save_json(data, keyword, folder):
-    filename = os.path.join(folder, f"{keyword}_leaks.json")
-    with open(filename, "w") as f:
-        json.dump(data, f, indent=4, ensure_ascii=False)
-    console.print(f"[green]✔ Saved to {filename}[/green]")
+    elif ext in [".jpg", ".jpeg", ".png"]:
+        file_info["type"] = "Image"
+        file_info["exif"] = extract_image_exif(filepath)
 
-def run(proxy=None):
-    console.rule("[bold cyan]:: PASTEBIN LEAK SCANNER ::[/bold cyan]", align="center")
-    
-    choice = input("Pilih cara pencarian:\n[1] Gunakan kata kunci sensitif bawaan\n[2] Masukkan custom keyword/nama/email/nomor telepon\nPilihan: ").strip()
-
-    if choice == "1":
-        keywords = KEYWORDS
-    elif choice == "2":
-        custom = input("Masukkan keyword: ").strip()
-        if not custom:
-            console.print("[red]❌ Kata kunci tidak boleh kosong![/red]")
-            return
-        keywords = [custom]
     else:
-        console.print("[red]❌ Pilihan tidak valid![/red]")
+        file_info["type"] = "Unsupported"
+        file_info["data"] = {"error": "File type not supported"}
+
+    return file_info
+
+def save_json(data, filepath):
+    os.makedirs("logs", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d%H%M")
+    outname = f"logs/metadata_{os.path.basename(filepath)}_{timestamp}.json"
+
+    with open(outname, "w") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    console.print(f"[green]✔ Metadata & results saved to {outname}[/green]")
+
+def run():
+    console.rule("[bold cyan]:: METADATA EXTRACTOR PRO ::[/bold cyan]", align="center")
+    console.print("[yellow]Masukkan path file atau drag-and-drop file PDF/DOCX/JPG/PNG...[/yellow]")
+    filepath = input("Enter file path: ").strip()
+
+    if not os.path.exists(filepath):
+        console.print("[red]❌ File tidak ditemukan![/red]")
         return
 
-    all_results = []
-
-    for key in keywords:
-        folder = generate_output_folder(key)
-        console.print(f"\n[blue][*] Searching for keyword: {key}[/blue]")
-        found_data = search_all_sources(key, proxy)
-
-        table = Table(show_header=True, header_style="bold green")
-        table.add_column("Source", style="cyan")
-        table.add_column("URL", style="yellow")
-        table.add_column("Found?", justify="center")
-
-        for item in found_data:
-            has_content = "[green]Ya[/green]" if item.get("content") and len(item["content"]) > 10 else "[red]Tidak[/red]"
-            table.add_row(
-                item["source"],
-                item["url"],
-                has_content
-            )
-            all_results.append(item)
-
-        console.print(table)
-
-    console.print(f"\n[bold green]✓ Total leaks found: {len(all_results)}[/bold green]")
-    if all_results:
-        final_folder = generate_output_folder("final")
-        save_json(all_results, "all", final_folder)
-
-if __name__ == "__main__":
-    run()
+    console.print(f"[blue]→ Analyzing file: {filepath}[/blue]")
+    result = extract_metadata(filepath)
+    console.print(json.dumps(result, indent=2, ensure_ascii=False))
+    save_json(result, filepath)
