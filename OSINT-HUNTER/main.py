@@ -14,7 +14,7 @@ from modules import (
     domain_recon,
     ip_analyzer,
     metadata_extractor,
-    js_param_scanner,
+    url_scanner,
     pastebin_scraper,
     telegram_scraper,
     xss_fuzzer
@@ -61,7 +61,7 @@ def show_menu():
     console.print("[3] Domain Recon (Whois, DNS)")
     console.print("[4] IP Analyzer (GeoIP, ASN, Ping)")
     console.print("[5] Metadata Extractor")
-    console.print("[6] JS File + Param Scanner")
+    console.print("[6] ")
     console.print("[7] XSS Param Fuzzer")
     console.print("[8] Pastebin Keyword Scraper")
     console.print("[9] Telegram OSINT Scraper")
@@ -87,7 +87,7 @@ def main():
             elif choice == "5":
                 run_module("Metadata Extractor", metadata_extractor.run)
             elif choice == "6":
-                run_module("JS File + Param Scanner", js_param_scanner.run)
+                run_module("URL Scanner", url_scanner.run)
             elif choice == "7":
                 run_module("XSS Param Fuzzer", xss_fuzzer.run)
             elif choice == "8":
