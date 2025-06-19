@@ -1,21 +1,20 @@
 import requests
-import socket
 import json
 import time
-import re
 from bs4 import BeautifulSoup
 from rich.console import Console
 from datetime import datetime
 import os
+import dns.resolver
 
 console = Console()
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 
-def get_whois(domain, proxy=None):
+def get_whois(domain):
     console.print(f"[cyan]→ Getting WHOIS info for {domain}[/cyan]")
     whois_data = {}
     try:
-        res = requests.get(f"https://who.is/whois/{domain}", headers=HEADERS, timeout=10, proxies=proxy)
+        res = requests.get(f"https://who.is/whois/{domain}", headers=HEADERS, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
         blocks = soup.find_all("div", class_="col-md-12 queryResponseBodyValue")
         if blocks:
@@ -28,28 +27,39 @@ def get_whois(domain, proxy=None):
 def get_dns(domain):
     console.print(f"[cyan]→ Getting DNS Records[/cyan]")
     dns_data = {"A": [], "NS": [], "MX": [], "TXT": []}
+    
     try:
-        ip = socket.gethostbyname(domain)
-        dns_data['A'].append(ip)
+        answers = dns.resolver.resolve(domain, 'A')
+        dns_data['A'] = [rdata.to_text() for rdata in answers]
     except:
         dns_data['A'].append("Not resolved")
 
     try:
-        result = socket.getaddrinfo(domain, None)
-        extracted = [x[4][0] for x in result]
-        dns_data["NS"] = extracted[:3]
-        dns_data["MX"] = extracted[:3]
-        dns_data["TXT"] = ["dummy-txt-record"]
+        answers = dns.resolver.resolve(domain, 'NS')
+        dns_data['NS'] = [rdata.to_text() for rdata in answers]
     except:
-        pass
+        dns_data['NS'].append("N/A")
+
+    try:
+        answers = dns.resolver.resolve(domain, 'MX')
+        dns_data['MX'] = [rdata.to_text() for rdata in answers]
+    except:
+        dns_data['MX'].append("N/A")
+
+    try:
+        answers = dns.resolver.resolve(domain, 'TXT')
+        dns_data['TXT'] = [rdata.to_text() for rdata in answers]
+    except:
+        dns_data['TXT'].append("N/A")
+
     return dns_data
 
-def get_subdomains_crtsh(domain, proxy=None):
+def get_subdomains_crtsh(domain):
     console.print(f"[cyan]→ Enumerating subdomains via crt.sh[/cyan]")
     subdomains = set()
     try:
         url = f"https://crt.sh/?q=%25.{domain}&output=json"
-        r = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
+        r = requests.get(url, headers=HEADERS, timeout=10)
         entries = r.json()
         for entry in entries:
             name = entry.get('name_value')
@@ -61,32 +71,32 @@ def get_subdomains_crtsh(domain, proxy=None):
         console.print(f"[red]crt.sh error: {e}[/red]")
     return list(subdomains)
 
-def get_subdomains_anubis(domain, proxy=None):
+def get_subdomains_anubis(domain):
     console.print(f"[cyan]→ Enumerating subdomains via Anubis API[/cyan]")
     try:
         url = f"https://jldc.me/anubis/subdomains/{domain}"
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
+        res = requests.get(url, headers=HEADERS, timeout=10)
         return res.json()
     except:
         return []
 
-def get_wayback_urls(domain, proxy=None):
+def get_wayback_urls(domain):
     console.print(f"[cyan]→ Pulling Wayback URLs[/cyan]")
     try:
         url = f"http://web.archive.org/cdx/search/cdx?url=*.{domain}/*&output=json&fl=original&collapse=urlkey"
-        res = requests.get(url, headers=HEADERS, timeout=10, proxies=proxy)
+        res = requests.get(url, headers=HEADERS, timeout=10)
         raw = res.json()
         return [entry[0] for entry in raw[1:]]
     except:
         return []
 
-def check_live_subdomains(subdomains, proxy=None):
+def check_live_subdomains(subdomains):
     console.print(f"[cyan]→ Checking live subdomains[/cyan]")
     live = []
     for sub in subdomains:
         try:
             url = f"http://{sub}"
-            res = requests.get(url, headers=HEADERS, timeout=3, proxies=proxy)
+            res = requests.get(url, headers=HEADERS, timeout=3)
             if res.status_code < 400:
                 live.append(sub)
         except:
@@ -100,7 +110,7 @@ def save_json(data, domain):
         json.dump(data, f, indent=4)
     console.print(f"[green]\n✔ Saved to {filename}[/green]")
 
-def run(proxy=None):
+def run():
     console.print("\n[bold cyan]:: DOMAIN RECON MODULE[/bold cyan]")
     domain = input("Enter domain (without https): ").strip().lower()
     if "." not in domain:
@@ -111,19 +121,19 @@ def run(proxy=None):
 
     result = {
         "domain": domain,
-        "whois": get_whois(domain, proxy),
+        "whois": get_whois(domain),
         "dns": get_dns(domain),
         "subdomains": [],
         "live_subdomains": [],
         "wayback_urls": []
     }
 
-    subdomains = list(set(get_subdomains_crtsh(domain, proxy) + get_subdomains_anubis(domain, proxy)))
+    subdomains = list(set(get_subdomains_crtsh(domain) + get_subdomains_anubis(domain)))
     result['subdomains'] = subdomains
 
-    result['live_subdomains'] = check_live_subdomains(subdomains, proxy)
+    result['live_subdomains'] = check_live_subdomains(subdomains)
 
-    result['wayback_urls'] = get_wayback_urls(domain, proxy)
+    result['wayback_urls'] = get_wayback_urls(domain)
 
     save_json(result, domain)
     console.print("[bold green]✓ Recon finished.[/bold green]")
