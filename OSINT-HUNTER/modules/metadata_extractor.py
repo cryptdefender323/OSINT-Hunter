@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import os
 import json
 import hashlib
@@ -7,11 +9,10 @@ import exifread
 from PIL import Image
 from rich.console import Console
 from datetime import datetime
-from tkinter import filedialog, Tk
 
 console = Console()
 
-def file_info(filepath):
+def get_file_info(filepath):
     try:
         stat = os.stat(filepath)
         return {
@@ -19,58 +20,97 @@ def file_info(filepath):
             "size_bytes": stat.st_size,
             "created": datetime.fromtimestamp(stat.st_ctime).isoformat(),
             "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
-            "hash_md5": hashlib.md5(open(filepath, 'rb').read()).hexdigest(),
-            "hash_sha1": hashlib.sha1(open(filepath, 'rb').read()).hexdigest()
+            "hash_md5": md5_hash(filepath),
+            "hash_sha1": sha1_hash(filepath),
+            "type": None
         }
     except Exception as e:
-        return {"error": f"File info error: {e}"}
+        console.print(f"[red]Error accessing file: {e}[/red]")
+        return {"error": str(e)}
 
-def extract_pdf_metadata(filepath):
-    console.print(f"[cyan]→ Extracting PDF metadata & full text[/cyan]")
-    metadata = {}
+def md5_hash(filepath):
+    hash_md5 = hashlib.md5()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
+
+def sha1_hash(filepath):
+    hash_sha1 = hashlib.sha1()
+    with open(filepath, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_sha1.update(chunk)
+    return hash_sha1.hexdigest()
+
+def extract_pdf_data(filepath):
+    data = {}
     try:
         with open(filepath, "rb") as f:
             reader = PyPDF2.PdfReader(f)
-            meta_raw = reader.metadata or {}
-            metadata["metadata"] = {k: str(v) for k, v in meta_raw.items()}
-            metadata["page_count"] = len(reader.pages)
-            metadata["text_all_pages"] = []
+            if reader.metadata:
+                raw_metadata = {k: str(v) for k, v in reader.metadata.items()}
+                data["metadata"] = raw_metadata
 
+            text_pages = []
             for page in reader.pages:
-                try:
-                    text = page.extract_text()
-                    if text:
-                        metadata["text_all_pages"].append(text.strip())
-                except:
-                    continue
-    except Exception as e:
-        console.print(f"[red]PDF error: {e}[/red]")
-        metadata["error"] = str(e)
-    return metadata
+                text = page.extract_text()
+                if text and len(text.strip()) > 0:
+                    text_pages.append(text.strip())
 
-def extract_docx_metadata(filepath):
-    console.print(f"[cyan]→ Extracting DOCX metadata[/cyan]")
+            data["page_count"] = len(reader.pages)
+            data["text_all_pages"] = text_pages
+    except Exception as e:
+        data["pdf_error"] = str(e)
+    return data
+
+def extract_docx_data(filepath):
     data = {}
     try:
         doc = docx.Document(filepath)
-        core = doc.core_properties
-        data = {
-            "author": core.author,
-            "created": str(core.created),
-            "last_modified_by": core.last_modified_by,
-            "modified": str(core.modified),
-            "title": core.title,
-            "subject": core.subject,
-            "category": core.category,
-            "comments": core.comments,
-            "keywords": core.keywords,
-        }
+        props = doc.core_properties
+        data.update({
+            "author": props.author,
+            "created": str(props.created),
+            "last_modified_by": props.last_modified_by,
+            "modified": str(props.modified),
+            "title": props.title,
+            "subject": props.subject,
+            "category": props.category,
+            "comments": props.comments,
+            "keywords": props.keywords,
+        })
     except Exception as e:
-        console.print(f"[red]DOCX error: {e}[/red]")
+        data["docx_error"] = str(e)
     return data
 
+def extract_image_gps(exif):
+    lat_tag = 'GPS GPSLatitude'
+    lon_tag = 'GPS GPSLongitude'
+    lat_ref_tag = 'GPS GPSLatitudeRef'
+    lon_ref_tag = 'GPS GPSLongitudeRef'
+
+    if lat_tag not in exif or lon_tag not in exif:
+        return {}
+
+    def convert_to_degrees(val):
+        d, m, s = [float(x.num) / float(x.den) for x in val.values]
+        return d + (m / 60.0) + (s / 3600.0)
+
+    latitude = convert_to_degrees(exif[lat_tag])
+    longitude = convert_to_degrees(exif[lon_tag])
+
+    if str(exif.get(lat_ref_tag)) == 'S':
+        latitude = -latitude
+    if str(exif.get(lon_ref_tag)) == 'W':
+        longitude = -longitude
+
+    return {
+        "latitude": latitude,
+        "longitude": longitude,
+        "google_maps": f"https://maps.google.com/?q={latitude},{longitude}"
+    }
+
 def extract_image_exif(filepath):
-    console.print(f"[cyan]→ Extracting EXIF from image[/cyan]")
     exif_data = {}
     gps_data = {}
 
@@ -79,68 +119,99 @@ def extract_image_exif(filepath):
             tags = exifread.process_file(f)
 
         for tag in tags:
-            exif_data[tag] = str(tags[tag])
-            if "GPS" in tag:
-                gps_data[tag] = tags[tag]
+            value = str(tags[tag])
+            exif_data[str(tag)] = value
+
+            if "GPS" in str(tag):
+                gps_data[str(tag)] = value
 
         if 'GPS GPSLatitude' in gps_data and 'GPS GPSLongitude' in gps_data:
-            def convert_to_degrees(val):
-                d, m, s = [float(x.num)/float(x.den) for x in val.values]
-                return d + (m / 60.0) + (s / 3600.0)
+            gps_coords = extract_image_gps(tags)
+            exif_data['GPS Coordinates'] = gps_coords
 
-            lat = convert_to_degrees(gps_data['GPS GPSLatitude'])
-            lon = convert_to_degrees(gps_data['GPS GPSLongitude'])
-            if str(gps_data.get('GPS GPSLatitudeRef')) == 'S':
-                lat = -lat
-            if str(gps_data.get('GPS GPSLongitudeRef')) == 'W':
-                lon = -lon
-
-            exif_data['GPS Coordinates'] = {
-                "latitude": lat,
-                "longitude": lon,
-                "google_maps": f"https://maps.google.com/?q={lat},{lon}"
-            }
     except Exception as e:
-        console.print(f"[red]EXIF error: {e}[/red]")
+        exif_data["exif_error"] = str(e)
+
     return exif_data
+
+def extract_full_text_from_pdf(filepath):
+    full_text = []
+    try:
+        with open(filepath, "rb") as f:
+            reader = PyPDF2.PdfReader(f)
+            for page in reader.pages:
+                text = page.extract_text()
+                if text:
+                    full_text.append(text.strip())
+    except:
+        return []
+
+    return full_text
+
+def extract_sensitive_info(text_list):
+    KEYWORDS = ["password", "apikey", "secret", "token", "bearer", "login", "email", "nomor hp", "telepon", "rekening", "KTP", "SIM"]
+    found = []
+
+    for idx, text in enumerate(text_list):
+        matches = [kw for kw in KEYWORDS if kw.lower() in text.lower()]
+        if matches:
+            found.append({
+                "page": idx+1,
+                "matches": list(set(matches)),
+                "snippet": text[:200] + "..."
+            })
+
+    return found
 
 def extract_metadata(filepath):
     ext = os.path.splitext(filepath)[-1].lower()
-    info = file_info(filepath)
+    file_info = get_file_info(filepath)
+
+    if not file_info or "error" in file_info:
+        return file_info
 
     if ext == ".pdf":
-        info["type"] = "PDF"
-        info["data"] = extract_pdf_metadata(filepath)
+        file_info["type"] = "PDF"
+        pdf_data = extract_pdf_data(filepath)
+        full_text = extract_full_text_from_pdf(filepath)
+        sensitive = extract_sensitive_info(full_text)
+        file_info.update(pdf_data)
+        file_info["sensitive_keywords"] = sensitive
+
     elif ext == ".docx":
-        info["type"] = "DOCX"
-        info["data"] = extract_docx_metadata(filepath)
+        file_info["type"] = "DOCX"
+        file_info["data"] = extract_docx_data(filepath)
+
     elif ext in [".jpg", ".jpeg", ".png"]:
-        info["type"] = "Image"
-        info["data"] = extract_image_exif(filepath)
+        file_info["type"] = "Image"
+        file_info["exif"] = extract_image_exif(filepath)
+
     else:
-        info["type"] = "Unknown"
-        info["data"] = {"error": "Unsupported file type"}
-    return info
+        file_info["type"] = "Unsupported"
+        file_info["data"] = {"error": "File type not supported"}
+
+    return file_info
 
 def save_json(data, filepath):
     os.makedirs("logs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d%H%M")
     outname = f"logs/metadata_{os.path.basename(filepath)}_{timestamp}.json"
+
     with open(outname, "w") as f:
-        json.dump(data, f, indent=2)
-    console.print(f"[green]✔ Metadata saved to {outname}[/green]")
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    console.print(f"[green]✔ Metadata & results saved to {outname}[/green]")
 
 def run():
-    console.print("\n[bold cyan]:: METADATA EXTRACTOR MODULE[/bold cyan]")
-    console.print("[yellow]Pilih file (PDF, DOCX, JPG, PNG)...[/yellow]")
-    Tk().withdraw()
-    filepath = filedialog.askopenfilename()
+    console.rule("[bold cyan]:: METADATA EXTRACTOR PRO ::[/bold cyan]", align="center")
+    console.print("[yellow]Masukkan path file atau drag-and-drop file PDF/DOCX/JPG/PNG...[/yellow]")
+    filepath = input("Enter file path: ").strip()
 
-    if not filepath:
-        console.print("[red]❌ No file selected.[/red]")
+    if not os.path.exists(filepath):
+        console.print("[red]❌ File tidak ditemukan![/red]")
         return
 
-    console.print(f"[blue]Selected file:[/blue] {filepath}")
-    data = extract_metadata(filepath)
-    console.print(json.dumps(data, indent=2))
-    save_json(data, filepath)
+    console.print(f"[blue]→ Analyzing file: {filepath}[/blue]")
+    result = extract_metadata(filepath)
+    console.print(json.dumps(result, indent=2, ensure_ascii=False))
+    save_json(result, filepath)
