@@ -14,8 +14,6 @@ All-in-one OSINT toolkit for red teams, bug bounty hunters, and cyber threat rec
 - 📁 **Metadata Extractor (PDF/DOCX/EXIF)**
 - 💉 **XSS Parameter Fuzzer**
 - 🔑 **Pastebin & Telegram Scraper**
-- 🛡️ **Stealth Mode (Proxy / TOR)**
-- 💨 Proxy Auto-Rotate + Parallel Speed Scan
 
 ---
 
