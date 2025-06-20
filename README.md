@@ -1,24 +1,35 @@
-![OSINT-HUNTER-BANNER](https://github.com/user-attachments/assets/a8a596fd-a7c4-40fb-9042-42d8129ac0d3)
-**OSINT-HUNTER** is an all-in-one stealth reconnaissance framework designed for red teamers, threat intel analysts, and bug bounty hunters. It provides a unified interface to automate various OSINT techniques and data gathering workflows under stealth mode.
+![OSINT-HUNTER-BANNER](https://github.com/user-attachments/assets/285dea57-23e6-4abc-8d5e-f69a7156cda1)
+# 🕵️‍♂️ CryptDefender OSINT Vault 🔍
+
+All-in-one OSINT toolkit for red teams, bug bounty hunters, and cyber threat recon.
+🔥 Created with a focus on stealth, automation and anti-detection.
 
 ---
 
 ## 🚀 Features
 
-- 🕵️ Username & Email OSINT (breach analysis, social links)
-- 🌐 Domain Recon (whois, DNS, subdomains, etc.)
-- 🛰️ IP Analyzer (GeoIP, ASN, Ping, etc.)
-- 🧠 Metadata Extractor (images, documents)
-- 🔎 JavaScript/Endpoint/Param Scanner
-- 🧬 XSS Parameter Fuzzer
-- 🧼 Pastebin & Telegram Scraper
+- 🔍 **Username Lookup**
+- 📧 **Email Breach Analyzer**
+- 🌐 **Domain & IP Recon**
+- 📁 **Metadata Extractor (PDF/DOCX/EXIF)**
+- 💉 **XSS Parameter Fuzzer**
+- 🔑 **Pastebin & Telegram Scraper**
 
 ---
 
-## 📦 Installation
+## 🖥️ Platforms Supported
+
+- ✅ Linux (Debian, Kali, Parrot)
+- ✅ macOS
+- ✅ Windows (via WSL / Python)
+- ✅ Android (via Termux - manual install)
+
+---
+
+## 🛠 Installation
 
 ```bash
-git clone https://github.com/cryptdefender323/OSINT-Hunter.git
-cd OSINT-Hunter
+git clone https://github.com/cryptdefender323/OSINT-HUNTER
+cd OSINT-HUNTER
 bash install.sh
-python3 -m pip install --break-system-packages -r requirements.txt
+python3 main.py
