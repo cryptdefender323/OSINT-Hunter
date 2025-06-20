@@ -1,0 +1,123 @@
+#!/usr/bin/env python3
+
+import argparse
+import requests
+from urllib.parse import urlparse
+import re
+import tldextract
+from bs4 import BeautifulSoup
+import socket
+import whois
+import json
+import os
+import base64
+
+GOOGLE_SAFE_BROWSING_API = os.getenv("GSB_API_KEY")  # Set via environment variable
+VT_API_KEY = os.getenv("VT_API_KEY")  # Set via environment variable
+
+class PhishingScanner:
+    def __init__(self, target):
+        self.target = target
+        self.signals = {}
+
+    def check_ssl(self):
+        try:
+            res = requests.get(self.target, timeout=5)
+            self.signals['ssl'] = '✔' if res.url.startswith("https") else '✘'
+        except:
+            self.signals['ssl'] = '✘'
+
+    def check_url_length(self):
+        self.signals['url_length'] = '✘' if len(self.target) > 75 else '✔'
+
+    def check_redirect(self):
+        try:
+            r = requests.get(self.target, timeout=5, allow_redirects=True)
+            self.signals['redirect_chain'] = '✘' if len(r.history) > 2 else '✔'
+        except:
+            self.signals['redirect_chain'] = '✘'
+
+    def check_domain(self):
+        ext = tldextract.extract(self.target)
+        suspicious = ['000webhost', 'weebly', 'bit.ly', 'goo.gl', 'rebrand.ly']
+        self.signals['domain_type'] = '✘' if any(s in self.target for s in suspicious) else '✔'
+
+    def check_keywords(self):
+        keywords = ['login', 'secure', 'update', 'banking', 'verify', 'signin']
+        self.signals['phish_words'] = '✔' if any(k in self.target.lower() for k in keywords) else '✘'
+
+    def check_whois(self):
+        try:
+            domain = urlparse(self.target).netloc
+            info = whois.whois(domain)
+            self.signals['whois_info'] = '✔' if info.creation_date else '✘'
+        except:
+            self.signals['whois_info'] = '✘'
+
+    def check_google_safe_browsing(self):
+        if not GOOGLE_SAFE_BROWSING_API:
+            self.signals['safe_browsing'] = 'N/A'
+            return
+
+        url = "https://safebrowsing.googleapis.com/v4/threatMatches:find?key=" + GOOGLE_SAFE_BROWSING_API
+        body = {
+            "client": {
+                "clientId": "phishing-checker",
+                "clientVersion": "1.0"
+            },
+            "threatInfo": {
+                "threatTypes": ["MALWARE", "SOCIAL_ENGINEERING"],
+                "platformTypes": ["ANY_PLATFORM"],
+                "threatEntryTypes": ["URL"],
+                "threatEntries": [{"url": self.target}]
+            }
+        }
+        try:
+            res = requests.post(url, json=body)
+            data = res.json()
+            self.signals['safe_browsing'] = '✘' if 'matches' in data else '✔'
+        except:
+            self.signals['safe_browsing'] = '✘'
+
+    def check_virustotal(self):
+        if not VT_API_KEY:
+            self.signals['virustotal'] = 'N/A'
+            return
+        headers = {
+            "x-apikey": VT_API_KEY
+        }
+        url_id = base64.urlsafe_b64encode(self.target.encode()).decode().strip("=")
+        try:
+            r = requests.get(f"https://www.virustotal.com/api/v3/urls/{url_id}", headers=headers)
+            result = r.json()
+            malicious_votes = result['data']['attributes']['last_analysis_stats']['malicious']
+            self.signals['virustotal'] = '✘' if malicious_votes > 0 else '✔'
+        except:
+            self.signals['virustotal'] = '✘'
+
+    def scan(self):
+        self.check_ssl()
+        self.check_url_length()
+        self.check_redirect()
+        self.check_domain()
+        self.check_keywords()
+        self.check_whois()
+        self.check_google_safe_browsing()
+        self.check_virustotal()
+
+        print("\n[*] Phishing URL Scanner Results:")
+        for k, v in self.signals.items():
+            print(f"{k:20}: {v}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Advanced Real-World Phishing URL Scanner")
+    parser.add_argument("url", help="Target URL to analyze")
+    args = parser.parse_args()
+
+    scanner = PhishingScanner(args.url)
+    scanner.scan()
+
+
+if __name__ == '__main__':
+    main()
